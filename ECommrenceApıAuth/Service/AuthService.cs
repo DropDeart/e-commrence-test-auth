@@ -1,88 +1,93 @@
-﻿using ECommrenceApıAuth.Domain;
+﻿// Services/AuthService.cs
+using ECommrenceApıAuth.Domain;
 using ECommrenceApıAuth.Interface;
+using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Options;
-using System.Net.Http.Headers;
-using System.Security.Cryptography;
-using System.Text;
-using System.Text.Json;
 
-namespace ECommrenceApıAuth.Service
+public class AuthService : IAuthService
 {
-    public class AuthService : IAuthService
+    private readonly HttpClient _httpClient;
+    private readonly ExternalApiSettings _settings;
+    private readonly IMemoryCache _cache;
+    private readonly SemaphoreSlim _semaphore = new(1, 1);
+
+    private const string TokenCacheKey = "ExternalApiToken";
+    private const string RequestCounterKey = "TokenRequestCounter";
+
+    public AuthService(HttpClient httpClient,IOptions<ExternalApiSettings> settings,IMemoryCache cache)
     {
-        private readonly JwtOptions _jwtOptions;
-        private readonly HttpClient _httpClient;
-        private readonly ExternalApiSettings _externalApiSettings;
+        _httpClient = httpClient;
+        _settings = settings.Value;
+        _cache = cache;
+    }
 
-        private TokenResponse _currentToken;
-        private int _requestCount = 0;
-
-        public AuthService(IOptions<JwtOptions> jwtOptions, IOptions<ExternalApiSettings> externalApiSettings, HttpClient httpClient)
+    public async Task<string> GetValidAccessTokenAsync()
+    {
+        // Mevcut token kontrolü
+        if (_cache.TryGetValue(TokenCacheKey, out TokenResponse cachedToken) &&
+            DateTime.UtcNow < cachedToken.ExpiresAt)
         {
-            _jwtOptions = jwtOptions.Value;
-            _externalApiSettings = externalApiSettings.Value;
-            _httpClient = httpClient;
-            _currentToken = new TokenResponse();
+            return cachedToken.AccessToken;
         }
 
-        public async Task<TokenResponse> GetValidTokenAsync(Guid userId, string userEmail)
+        // Rate limit kontrolü
+        var (count, windowStart) = _cache.GetOrCreate(RequestCounterKey, entry =>
         {
-            // Eğer token yoksa veya süresi dolmuşsa yenisini al
-            if (_currentToken.AccessToken == null || DateTime.UtcNow >= _currentToken.ExpiresIn)
+            entry.AbsoluteExpiration = DateTime.UtcNow.AddHours(1);
+            return (0, DateTime.UtcNow);
+        });
+
+        if (count >= _settings.HourlyTokenLimit)
+            throw new RateLimitException("Saatlik token limiti aşıldı.");
+
+        await _semaphore.WaitAsync();
+        try
+        {
+            // Double-check
+            if (_cache.TryGetValue(TokenCacheKey, out cachedToken) &&
+                DateTime.UtcNow < cachedToken.ExpiresAt)
             {
-                _currentToken = await RequestNewTokenAsync(userId, userEmail);
-                _requestCount = 0; // Yeni token alındığında sayaç sıfırlanır
+                return cachedToken.AccessToken;
             }
 
-            // Eğer 5 isteklik limit dolmuşsa, yeni token almak zorundayız
-            if (_requestCount >= _externalApiSettings.HourlyTokenLimit)
-            {
-                _currentToken = await RequestNewTokenAsync(userId, userEmail);
-                _requestCount = 0; // Sayaç sıfırla
-            }
+            // Yeni token al
+            var newToken = await RequestNewTokenAsync();
+            _cache.Set(TokenCacheKey, newToken, newToken.ExpiresAt);
 
-            _requestCount++; // Her çağrıda sayacı arttır
-            return _currentToken;
+            // Counter'ı güncelle
+            _cache.Set(RequestCounterKey, (count + 1, windowStart),
+                new DateTimeOffset(windowStart.AddHours(1)));
+
+            return newToken.AccessToken;
         }
-
-        public async Task<TokenResponse> RequestNewTokenAysnc(Guid userId, string userEmail)
+        finally
         {
-            var requestBody = new
-            {
-                client_id = _externalApiSettings.ClientId,
-                client_secret = _externalApiSettings.ClientSecret,
-                grant_type = "client_credentials"
-            };
-
-            var content = new StringContent(JsonSerializer.Serialize(requestBody), Encoding.UTF8, "application/json");
-
-            var response = await _httpClient.PostAsync(_externalApiSettings.AuthUrl, content);
-
-            if (!response.IsSuccessStatusCode)
-            {
-                throw new Exception($"Token alınamadı. Hata: {response.StatusCode}");
-            }
-
-            var jsonResponse = await response.Content.ReadAsStringAsync();
-            var tokenData = JsonSerializer.Deserialize<TokenResponse>(jsonResponse, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
-
-            // Token'ın geçerlilik süresi (expires_in) saniye cinsinden olduğundan, ExpiryTime hesaplanmalı
-            return new TokenResponse
-            {
-                AccessToken = tokenData.AccessToken,
-                TokenType = tokenData.TokenType,
-                ExpiresIn = DateTime.UtcNow // Geçerlilik süresi hesaplanır
-            };
-        }
-
-        public async Task<RefreshToken> GenerateRefreshTokenAsync()
-        {
-            return new RefreshToken
-            {
-                Token = Convert.ToBase64String(RandomNumberGenerator.GetBytes(64)),
-                Created = DateTime.UtcNow,
-                ExpiryTime = DateTime.UtcNow.AddDays(7) // Refresh Token 7 gün geçerli, Genelde daha uzun da olabilir.
-            };
+            _semaphore.Release();
         }
     }
+
+    private async Task<TokenResponse> RequestNewTokenAsync()
+    {
+        var request = new HttpRequestMessage(HttpMethod.Post, _settings.AuthUrl)
+        {
+            Content = new FormUrlEncodedContent(new Dictionary<string, string>
+            {
+                {"grant_type", "client_credentials"},
+                {"client_id", _settings.ClientId},
+                {"client_secret", _settings.ClientSecret}
+            })
+        };
+
+        var response = await _httpClient.SendAsync(request);
+        response.EnsureSuccessStatusCode();
+
+        var token = await response.Content.ReadFromJsonAsync<TokenResponse>();
+        token.RetrievedTime = DateTime.UtcNow;
+        return token;
+    }
+}
+
+public class RateLimitException : Exception
+{
+    public RateLimitException(string message) : base(message) { }
 }

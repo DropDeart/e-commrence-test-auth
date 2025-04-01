@@ -8,9 +8,15 @@ namespace ECommrenceApıAuth.Domain
         public string TokenType { get; set; }
 
         [JsonPropertyName("expires_in")]
-        public DateTime ExpiresIn { get; set; }
+        public int ExpiresInSeconds { get; set; }
 
         [JsonPropertyName("access_token")]
         public string AccessToken { get; set; }
+
+        [JsonIgnore]
+        public DateTime RetrievedTime { get; set; } = DateTime.UtcNow;
+
+        [JsonIgnore]
+        public DateTime ExpiresAt => RetrievedTime.AddSeconds(ExpiresInSeconds - 30); // 30 saniye buffer
     }
 }
