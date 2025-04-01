@@ -1,0 +1,6 @@
+@ECommrenceApıAuth_HostAddress = http://localhost:5122
+
+GET {{ECommrenceApıAuth_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###
