@@ -1,17 +1,16 @@
-Bu commit, belirli bir REST API'ye yapılan isteklerde token yönetimini düzgün şekilde ele alır. Bu bağlamda aşağıdaki adımlar gerçekleştirilmiştir:
+# Order API Token Management System 🚚🔒
 
-1. **JWT Authentication ve Authorization:**  
-   - JWT tabanlı kimlik doğrulama eklendi. API'ye yapılan her istek, geçerli bir JWT token ile doğrulanmaktadır.
-   - `AddAuthentication` ve `AddJwtBearer` kullanılarak JWT doğrulama süreci yapılandırıldı. `TokenValidationParameters` içinde issuer, audience ve signing key gibi güvenlik ayarları yapıldı.
-   
-2. **Token Cache Yönetimi ve Yenileme:**
-   - Token yönetimi, her istek için yeni bir token almaktansa, geçerli bir token cache'lenerek kullanıldı. Eğer token süresi dolmuşsa, yeni token alındı.
-   - `RefreshToken` mantığı uygulandı. Token süresi sona erdiğinde, yeni bir token almak yerine refresh token kullanılarak token yenileme işlemi gerçekleştirilebilecek şekilde yapılandırıldı.
+Bu proje, saatlik token alma limiti olan bir REST API'den düzenli aralıklarla sipariş verisi çekmek için geliştirilmiş bir token yönetim sistemidir. 
 
-3. **API Rate Limiting Yönetimi:**
-   - API üzerinden yapılacak istekler için, saatlik 5 isteklik limit eklenerek, bu limitin aşılmasının önüne geçildi. 
-   - Token yenileme işlemi, istek limitine takılmadan önce yapılması için optimize edildi.
+## Özellikler ✨
+- ⏱ **5 Dakikada Bir Otomatik Sipariş Çekme**
+- 🔐 **Token Önbellekleme & Otomatik Yenileme**
+- 🚫 **Saatlik 5 Token Alma Limiti**
+- 🛡 **Thread-Safe Token Yönetimi**
+- 📊 **Detaylı Loglama**
 
-4. **Swagger ve Güvenlik Ayarları:**
-   - Swagger UI, geliştirme ortamında aktif hale getirildi.
-   - HTTPS kullanımı zorunlu kılındı ve güvenlik başlıkları doğru şekilde yapılandırıldı.
+## Nasıl Çalışır? 🔧
+1. **Token Al:** `client_credentials` flow ile access token alınır.
+2. **Önbelleğe Al:** Token, süresi dolana kadar bellekte saklanır.
+3. **Sipariş Çek:** Her 5 dakikada bir token ile API'ye istek atılır.
+4. **Limit Kontrolü:** Saatlik 5. istekten sonra 1 saat bekletilir.
