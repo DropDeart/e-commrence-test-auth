@@ -1,4 +1,4 @@
-# Order API Token Management System 🚚🔒
+# Sipariş API Token Management System 🚚🔒
 
 Bu proje, saatlik token alma limiti olan bir REST API'den düzenli aralıklarla sipariş verisi çekmek için geliştirilmiş bir token yönetim sistemidir. 
 
